@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vargus kunstimuuseumis – VR katse</title>
+<style>
+:root{--wall:#271e15;--gold:#d4a83a;--gold2:#f3d77a;--txt:#f3ead6;--mut:#c9b994}
+*{box-sizing:border-box}
+body{margin:0;background:var(--wall);color:var(--txt);font:17px/1.5 system-ui,sans-serif;min-height:100vh;display:grid;place-items:center;padding:20px}
+main{max-width:640px;width:100%}
+h1{font-size:clamp(30px,6vw,44px);line-height:1.05;color:var(--gold2);margin:0 0 8px}
+p{color:var(--mut)}
+label{display:block;margin:18px 0 6px;font-weight:600}
+input{font:inherit;font-size:22px;letter-spacing:.2em;text-transform:uppercase;width:100%;padding:12px;border-radius:10px;border:2px solid var(--gold);background:#fffaf0;color:#2a1d10}
+.btns{display:grid;gap:12px;margin-top:18px}
+a.b{display:block;text-decoration:none;text-align:center;padding:16px;border-radius:12px;border:2px solid var(--gold);background:linear-gradient(#e3bd55,#b8892a);color:#1d1408;font-weight:700;font-size:19px}
+a.b small{display:block;font-weight:400;font-size:14px}
+a.b.alt{background:transparent;color:var(--gold2)}
+ol{color:var(--mut);padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Vargus kunstimuuseumis</h1>
+<p>Tehniline katse: üks mängija on prillidega muuseumisaalis, teised on kriisikeskuses telefoni või arvuti taga. Mõlemad peavad kasutama sama mängutoa koodi.</p>
+<label for="room">Mängutoa kood</label>
+<input id="room" maxlength="8" autocomplete="off">
+<div class="btns">
+  <a class="b" id="vr" href="#">Muuseumisaal<small>VR-prillid (Pico brauser) või arvuti ekraan</small></a>
+  <a class="b alt" id="team" href="#">Kriisikeskus<small>telefon või arvuti</small></a>
+</div>
+<ol>
+  <li>Prillides ava see leht Pico brauseris, vali „Muuseumisaal“ ja vajuta all „ENTER VR“.</li>
+  <li>Teised avavad sama lehe telefonis, sisestavad sama koodi ja valivad „Kriisikeskus“.</li>
+  <li>Prillidega mängija kirjeldab hoidlas olevaid maale. Kriisikeskus otsustab kataloogi põhjal, mis saali iga maal kuulub.</li>
+</ol>
+</main>
+<script>
+{
+  const inp = document.getElementById('room');
+  const letters = 'ABCDEFGHJKLMNPRSTUVZ';
+  let code = '';
+  try { code = localStorage.getItem('vargus-room') || ''; } catch (e) {}
+  if (!code) { for (let i = 0; i < 4; i++) code += letters[Math.floor(Math.random() * letters.length)]; }
+  inp.value = code;
+  const go = (page) => (e) => {
+    e.preventDefault();
+    const c = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (!c) { inp.focus(); return; }
+    try { localStorage.setItem('vargus-room', c); } catch (err) {}
+    location.href = page + '?room=' + c;
+  };
+  document.getElementById('vr').addEventListener('click', go('muuseum.html'));
+  document.getElementById('team').addEventListener('click', go('keskus.html'));
+}
+</script>
+</body>
+</html>

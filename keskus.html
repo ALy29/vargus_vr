@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kriisikeskus – Vargus kunstimuuseumis</title>
+<style>
+:root{--wall:#271e15;--gold:#d4a83a;--gold2:#f3d77a;--parch:#f1e6c8;--ink:#2a1d10;--txt:#f3ead6;--mut:#c9b994;--green:#2f7d3a;--red:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--wall);color:var(--txt);font:16px/1.5 system-ui,sans-serif;padding:14px}
+main{max-width:900px;margin:0 auto}
+h1{font-size:26px;color:var(--gold2);margin:0}
+h2{font-size:19px;color:var(--gold2);margin:22px 0 8px}
+.top{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+.st{font-size:14px;color:var(--mut)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#777;margin-right:6px;vertical-align:middle}
+.dot.on{background:#5fd36e}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media(max-width:620px){.grid{grid-template-columns:minmax(0,1fr)}}
+.frame{background:#1b140d;border:3px solid var(--gold);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.frame b{color:var(--gold2)}
+.frame .s{min-height:24px}
+.frame.hl{box-shadow:0 0 0 4px #ffd966}
+button{font:inherit;min-height:44px;border-radius:10px;border:2px solid var(--gold);background:linear-gradient(#e3bd55,#b8892a);color:#1d1408;font-weight:700;padding:8px 12px;cursor:pointer}
+button.ghost{background:transparent;color:var(--gold2)}
+.cat{display:grid;gap:8px}
+.card{background:var(--parch);color:var(--ink);border-radius:10px;padding:10px 12px}
+.card .m{font-size:14px;color:#5a4a30}
+.banner{margin-top:14px;padding:14px;border-radius:12px;font-weight:700;font-size:19px;text-align:center}
+.banner.open{background:var(--green)}
+.banner.wrong{background:#5b2018}
+.note{font-size:14px;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><h1>Kriisikeskus</h1><div class="st"><span>Tuba <b id="room"></b></span> · <span><span class="dot" id="dvr"></span><span id="svr">muuseumis olija pole ühendatud</span></span></div></div>
+<p class="note">Teie ei näe saali. Prillidega mängija kirjeldab, mida ta hoidlas näeb. Otsustage kataloogi põhjal, mis maal see on ja millisesse raami see kuulub. Nupuga „Näita prillidele“ paneb raam prillides helendama.</p>
+<div id="banner"></div>
+<h2>Saal: tühjad raamid</h2>
+<div class="grid" id="frames"></div>
+<h2>Kataloog: varastatud teosed</h2>
+<div class="cat" id="cat"></div>
+<p class="note" id="held"></p>
+<h2>Õpetajale</h2>
+<button class="ghost" id="reset">Alusta katset uuesti</button> <span class="note" id="err"></span>
+</main>
+<script type="module">
+import { PAINTINGS, FRAMES, GENRE, getRoom, api } from './common.js';
+const room = getRoom();
+const $ = (id) => document.getElementById(id);
+if (!room) { location.href = 'index.html'; }
+$('room').textContent = room;
+let S = null, lastV = 0, resetArmed = false;
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function render() {
+  if (!S) return;
+  const online = S.now - (S.seen?.vr || 0) < 6;
+  $('dvr').className = 'dot' + (online ? ' on' : '');
+  $('svr').textContent = online ? 'muuseumis olija on ühendatud' : 'muuseumis olija pole ühendatud';
+  const filled = Object.keys(FRAMES).filter(f => Object.values(S.p).includes('f:' + f)).length;
+  $('banner').innerHTML = S.open ? '<div class="banner open">Kõik maalid on õiges saalis. Näitus on avatud!</div>'
+    : filled === 3 ? '<div class="banner wrong">Kõik raamid on täis, aga saal ei avane: vähemalt üks maal on vales raamis.</div>' : '';
+  $('frames').innerHTML = Object.entries(FRAMES).map(([f, fr]) => {
+    const has = Object.entries(S.p).find(([, loc]) => loc === 'f:' + f);
+    const txt = has ? (S.open ? esc(PAINTINGS[has[0]].title) : 'Maal on riputatud') : 'Tühi';
+    const on = S.hl === f;
+    return '<div class="frame' + (on ? ' hl' : '') + '"><b>' + fr.label + '</b><div class="s">' + txt + '</div>' +
+      '<button data-f="' + f + '" class="' + (on ? '' : 'ghost') + '">' + (on ? 'Helendab prillides' : 'Näita prillidele') + '</button></div>';
+  }).join('');
+  $('cat').innerHTML = Object.values(PAINTINGS).map(p => '<div class="card"><b>' + esc(p.title) + '</b><div class="m">' + esc(p.author) + ' · ' + esc(p.year) + ' · ' + GENRE[p.g] + '</div></div>').join('');
+  const held = Object.values(S.p).includes('held');
+  $('held').textContent = held ? 'Muuseumis olijal on praegu üks maal käes.' : '';
+}
+async function poll() {
+  try { const s = await api(room, 'team'); if (s.v >= lastV) { S = s; lastV = s.v; render(); } $('err').textContent = ''; }
+  catch (e) { $('err').textContent = 'Ühendus serveriga puudub (' + e.message + ').'; }
+}
+async function send(body) {
+  try { const s = await api(room, 'team', body); S = s; lastV = s.v; render(); } catch (e) { $('err').textContent = 'Saatmine ebaõnnestus.'; }
+}
+$('frames').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-f]'); if (!b) return;
+  send({ a: 'hl', f: S && S.hl === b.dataset.f ? '' : b.dataset.f });
+});
+$('reset').addEventListener('click', () => {
+  if (!resetArmed) { resetArmed = true; $('reset').textContent = 'Vajuta veel kord, et kinnitada'; setTimeout(() => { resetArmed = false; $('reset').textContent = 'Alusta katset uuesti'; }, 4000); return; }
+  resetArmed = false; $('reset').textContent = 'Alusta katset uuesti'; send({ a: 'reset' });
+});
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

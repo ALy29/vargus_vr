@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muuseumisaal – Vargus kunstimuuseumis</title>
+<style>
+body{margin:0;background:#0e0a06;overflow:hidden;font:15px/1.4 system-ui,sans-serif;color:#f3ead6}
+canvas{display:block;touch-action:none}
+#hud{position:fixed;left:10px;top:10px;max-width:min(440px,calc(100vw - 20px));background:#1b140dd9;border:2px solid #d4a83a;border-radius:10px;padding:10px 12px;pointer-events:none}
+#hud b{color:#f3d77a}
+#hud .s{font-size:13px;color:#c9b994}
+</style>
+<script type="importmap">{"imports":{"three":"./lib/three.module.min.js"}}</script>
+</head>
+<body>
+<div id="hud"><b>Muuseumisaal</b> · tuba <b id="room"></b> · <span id="conn">ühendan…</span>
+<div class="s">Prillides: suuna kiir ja vajuta päästikut. Maalile vajutades võtad selle kätte, raamile vajutades riputad, põrandale vajutades liigud. Hoidla on sinu selja taga. Ekraanil: lohista vaatamiseks, klõpsa tegutsemiseks.</div></div>
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from './lib/VRButton.js';
+import { PAINTINGS, FRAMES, getRoom, api } from './common.js';
+
+const room = getRoom();
+if (!room) { location.href = 'index.html'; }
+document.getElementById('room').textContent = room;
+const connEl = document.getElementById('conn');
+
+// --- renderer, scene, rig ---
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e0a06);
+const rig = new THREE.Group();
+rig.position.set(0, 0, 1.2);
+scene.add(rig);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 60);
+camera.position.set(0, 1.6, 0);
+rig.add(camera);
+
+// --- room ---
+const W = 8, D = 8, H = 3.4;
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.85 }));
+floor.rotation.x = -Math.PI / 2; floor.name = 'floor'; scene.add(floor);
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x5a2f2a, roughness: 0.95 });
+const addWall = (w, x, z, ry) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, H), wallMat); m.position.set(x, H / 2, z); m.rotation.y = ry; scene.add(m); };
+addWall(W, 0, -D / 2, 0); addWall(W, 0, D / 2, Math.PI); addWall(D, -W / 2, 0, Math.PI / 2); addWall(D, W / 2, 0, -Math.PI / 2);
+const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshStandardMaterial({ color: 0x1a120c }));
+ceil.rotation.x = Math.PI / 2; ceil.position.y = H; scene.add(ceil);
+
+// --- lights ---
+const hemi = new THREE.HemisphereLight(0xfff1dc, 0x2a1d12, 0.45);
+scene.add(hemi);
+const spots = [];
+function addSpot(x, z, tx, ty, tz) {
+  const s = new THREE.SpotLight(0xfff0d0, 18, 8, Math.PI / 6, 0.5, 1.4);
+  s.position.set(x, H - 0.1, z); s.target.position.set(tx, ty, tz);
+  scene.add(s); scene.add(s.target); spots.push(s); return s;
+}
+
+// --- text labels ---
+function labelMesh(text, w, h, color = '#f3d77a', px = 120) {
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = Math.round(1024 * h / w);
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '800 ' + px + 'px system-ui, sans-serif';
+  while (px > 20 && ctx.measureText(text).width > cv.width * 0.94) { px -= 4; ctx.font = '800 ' + px + 'px system-ui, sans-serif'; }
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+}
+
+// --- frames on the north wall ---
+const FX = { F1: -2.6, F2: 0, F3: 2.6 }, FY = 1.7, FZ = -D / 2 + 0.02;
+const frameBacks = [], frameGold = {};
+for (const [f, fr] of Object.entries(FRAMES)) {
+  const g = new THREE.Group(); g.position.set(FX[f], FY, FZ); scene.add(g);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), new THREE.MeshStandardMaterial({ color: 0x22160e }));
+  back.position.z = 0.005; back.name = 'frame'; back.userData.f = f; g.add(back); frameBacks.push(back);
+  const gold = new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 0.7, roughness: 0.35, emissive: 0x000000 });
+  frameGold[f] = gold;
+  [[0, 0.7, 1.5, 0.1], [0, -0.7, 1.5, 0.1], [-0.7, 0, 0.1, 1.5], [0.7, 0, 0.1, 1.5]].forEach(([x, y, w, h]) => {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.06), gold); b.position.set(x, y, 0.03); g.add(b);
+  });
+  const lab = labelMesh(fr.label, 1.5, 0.22); lab.position.set(0, -0.95, 0.01); g.add(lab);
+  addSpot(FX[f], -1.8, FX[f], FY, FZ);
+}
+const sign = labelMesh('NÄITUS ON AVATUD', 5, 0.5, '#ffe9a8', 110);
+sign.position.set(0, 2.95, FZ + 0.01); sign.visible = false; scene.add(sign);
+
+// --- depot (behind the start position) ---
+const depot = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.08, 0.7), new THREE.MeshStandardMaterial({ color: 0x3a2717, roughness: 0.8 }));
+depot.position.set(0, 0.6, D / 2 - 0.6); depot.name = 'depot'; scene.add(depot);
+const depLab = labelMesh('HOIDLA', 2, 0.4); depLab.position.set(0, 2.75, D / 2 - 0.02); depLab.rotation.y = Math.PI; scene.add(depLab);
+addSpot(0, 2, 0, 1, D / 2 - 0.6);
+const SLOT = [-1.7, -0.57, 0.57, 1.7];
+
+// --- paintings ---
+const loader = new THREE.TextureLoader();
+const sideMat = new THREE.MeshStandardMaterial({ color: 0x2a1d12, roughness: 0.9 });
+const paint = {};
+Object.entries(PAINTINGS).forEach(([key, p], i) => {
+  const front = new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.8 });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.04), [sideMat, sideMat, sideMat, sideMat, front, sideMat]);
+  m.name = 'painting'; m.userData = { p: key, h: 0.9, slot: i };
+  loader.load(p.img, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    front.map = tex; front.color.set(0xffffff); front.needsUpdate = true;
+    const ar = tex.image.width / tex.image.height, max = 1.1;
+    const w = ar >= 1 ? max : max * ar, h = ar >= 1 ? max / ar : max;
+    m.geometry.dispose(); m.geometry = new THREE.BoxGeometry(w, h, 0.04); m.userData.h = h;
+    if (S) place(key, S.p[key]);
+  });
+  scene.add(m); paint[key] = m;
+});
+
+// --- controllers ---
+const controllers = [];
+let activeCtrl = null;
+for (let i = 0; i < 2; i++) {
+  const c = renderer.xr.getController(i);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]), new THREE.LineBasicMaterial({ color: 0xffe08a }));
+  line.scale.z = 6; c.add(line);
+  c.addEventListener('selectstart', () => { activeCtrl = c; act(rayFromController(c)); });
+  rig.add(c); controllers.push(c);
+}
+const marker = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.26, 32), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
+marker.rotation.x = -Math.PI / 2; marker.visible = false; scene.add(marker);
+
+// --- state ---
+let S = null, lastV = 0;
+const locOf = (k) => S ? S.p[k] : 'depot';
+const heldKey = () => S ? (Object.keys(S.p).find(k => S.p[k] === 'held') || null) : null;
+
+function place(key, loc) {
+  const m = paint[key]; if (!m) return;
+  if (loc === 'held') {
+    const parent = renderer.xr.isPresenting ? (activeCtrl || controllers[0]) : camera;
+    parent.add(m);
+    if (renderer.xr.isPresenting) { m.position.set(0, -0.02, -0.45); m.scale.setScalar(0.45); }
+    else { m.position.set(0.42, -0.3, -0.9); m.scale.setScalar(0.28); }
+    m.rotation.set(0, 0, 0);
+  } else if (loc && loc.startsWith('f:')) {
+    const f = loc.slice(2); scene.add(m);
+    m.position.set(FX[f], FY, FZ + 0.06); m.rotation.set(0, 0, 0); m.scale.setScalar(1);
+  } else {
+    scene.add(m);
+    m.position.set(SLOT[m.userData.slot], 0.64 + m.userData.h * 0.42, D / 2 - 0.68);
+    m.rotation.set(0, Math.PI, 0); m.scale.setScalar(0.85);
+  }
+}
+function applyState(s) {
+  S = s;
+  for (const k of Object.keys(PAINTINGS)) place(k, s.p[k]);
+  sign.visible = !!s.open;
+  hemi.intensity = s.open ? 1.1 : 0.45;
+  spots.forEach(sp => { sp.intensity = s.open ? 32 : 18; });
+}
+async function send(body, optimistic) {
+  if (S && optimistic) { optimistic(S); applyState(S); }
+  try { const s = await api(room, 'vr', body); lastV = s.v; applyState(s); }
+  catch (e) { connEl.textContent = 'ühendus puudub'; }
+}
+async function poll() {
+  try {
+    const s = await api(room, 'vr');
+    connEl.textContent = (s.now - (s.seen?.team || 0) < 6) ? 'kriisikeskus on ühendatud' : 'kriisikeskus pole veel ühendatud';
+    if (s.v >= lastV) { lastV = s.v; applyState(s); }
+  } catch (e) { connEl.textContent = 'ühendus serveriga puudub'; }
+}
+poll(); setInterval(poll, 800);
+
+// --- actions ---
+function teleport(p) {
+  const lim = W / 2 - 0.6;
+  const x = Math.max(-lim, Math.min(lim, p.x)), z = Math.max(-lim, Math.min(lim, p.z));
+  if (renderer.xr.isPresenting) {
+    const off = camera.position.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rig.rotation.y);
+    rig.position.set(x - off.x, 0, z - off.z);
+  } else rig.position.set(x, 0, z);
+}
+function act(hits) {
+  const h = hits[0]; if (!h) return;
+  const o = h.object, held = heldKey();
+  if (held) {
+    if (o.name === 'frame') return send({ a: 'hang', p: held, f: o.userData.f }, s => hangLocal(s, held, o.userData.f));
+    if (o.name === 'painting' && String(locOf(o.userData.p)).startsWith('f:')) { const f = locOf(o.userData.p).slice(2); return send({ a: 'hang', p: held, f }, s => hangLocal(s, held, f)); }
+    if (o.name === 'depot' || o.name === 'painting') return send({ a: 'drop', p: held }, s => { s.p[held] = 'depot'; });
+    if (o.name === 'floor') return teleport(h.point);
+  } else {
+    if (o.name === 'painting') { const k = o.userData.p; return send({ a: 'take', p: k }, s => { s.p[k] = 'held'; }); }
+    if (o.name === 'floor') return teleport(h.point);
+  }
+}
+function hangLocal(s, k, f) { for (const q of Object.keys(s.p)) if (s.p[q] === 'f:' + f) s.p[q] = 'depot'; s.p[k] = 'f:' + f; }
+
+const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
+const targets = () => [floor, depot, ...frameBacks, ...Object.values(paint).filter(m => m.parent === scene)];
+function rayFromController(c) {
+  tmpM.identity().extractRotation(c.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM);
+  return raycaster.intersectObjects(targets(), false);
+}
+
+// --- screen controls (no headset) ---
+let yaw = 0, pitch = 0, down = null;
+const ndc = new THREE.Vector2();
+function screenHits(e) { ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1); raycaster.setFromCamera(ndc, camera); return raycaster.intersectObjects(targets(), false); }
+renderer.domElement.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, moved: 0 }; renderer.domElement.setPointerCapture(e.pointerId); });
+renderer.domElement.addEventListener('pointermove', e => {
+  if (renderer.xr.isPresenting) return;
+  if (down) {
+    const dx = e.clientX - down.x, dy = e.clientY - down.y; down.moved += Math.abs(dx) + Math.abs(dy); down.x = e.clientX; down.y = e.clientY;
+    yaw -= dx * 0.005; pitch = Math.max(-1.2, Math.min(1.2, pitch - dy * 0.005));
+    rig.rotation.y = yaw; camera.rotation.x = pitch;
+  }
+  const h = screenHits(e)[0];
+  marker.visible = !!(h && h.object.name === 'floor'); if (marker.visible) marker.position.set(h.point.x, 0.01, h.point.z);
+});
+renderer.domElement.addEventListener('pointerup', e => { if (down && down.moved < 8) act(screenHits(e)); down = null; });
+renderer.xr.addEventListener('sessionstart', () => { camera.rotation.x = 0; if (S) applyState(S); });
+renderer.xr.addEventListener('sessionend', () => { if (S) applyState(S); });
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+// --- loop ---
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const t = clock.getElapsedTime();
+  for (const f of Object.keys(FRAMES)) {
+    const k = S && S.hl === f ? 0.5 + 0.5 * Math.sin(t * 5) : 0;
+    frameGold[f].emissive.setRGB(0.9 * k, 0.7 * k, 0.15 * k);
+  }
+  if (renderer.xr.isPresenting) {
+    marker.visible = false;
+    for (const c of controllers) {
+      const h = rayFromController(c)[0];
+      if (h && h.object.name === 'floor') { marker.visible = true; marker.position.set(h.point.x, 0.01, h.point.z); break; }
+    }
+  }
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

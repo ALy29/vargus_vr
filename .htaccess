@@ -1,0 +1,9 @@
+# Peida git-i tehnilised failid veebist
+RedirectMatch 404 /\.git
+
+# HTTPS-ile suunamine. Lülita sisse alles siis, kui https://... aadress
+# juba töötab (cPanel » SSL/TLS Status » Run AutoSSL). Eemalda selleks
+# kolme alumise rea eest #-märgid.
+# RewriteEngine On
+# RewriteCond %{HTTPS} off
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
